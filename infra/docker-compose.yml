@@ -6,10 +6,14 @@ networks:
 
 services:
   dns-server:
+    build:
+      context: ../dns-server
     image: forgecloud/dns-server
     container_name: forgecloud-dns
     networks:
       - forgecloud-net
+    ports:
+      - "1053:53/udp"
 
   gateway:
     image: forgecloud/gateway
