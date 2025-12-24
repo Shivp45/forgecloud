@@ -1,99 +1,158 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
+	"os/signal"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
-// Workspace registry (thread-safe)
-var registry = struct {
-	sync.RWMutex
-	workspaces map[string]string // workspaceID → containerIP
-}{workspaces: make(map[string]string)}
 
-// Create workspace request payload
-type CreateWorkspaceRequest struct {
-	ID       string `json:"id"`
-	Image    string `json:"image"`
-	CPULimit string `json:"cpu"`
-	Memory   string `json:"memory"`
+type ctxKey string
+
+const reqIDKey ctxKey = "rid"
+
+type Workspace struct {
+	ID        string    `json:"id"`
+	Container string    `json:"container"`
+	Image     string    `json:"image"`
+	CPU       string    `json:"cpu"`
+	Memory    string    `json:"memory"`
+	IP        string    `json:"ip"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
-// POST /workspace/create
-func createWorkspace(w http.ResponseWriter, r *http.Request) {
-	var req CreateWorkspaceRequest
+var wsRegistry = struct {
+	sync.RWMutex
+	items map[string]Workspace
+}{items: make(map[string]Workspace)}
+
+func generateRequestID() string {
+	return time.Now().Format("20060102T150405.000")
+}
+
+func CreateContainerWorkspace(ctx context.Context, id, image, cpu, memory string) (Workspace, error) {
+	containerName := "ws-" + id
+
+	cmd := exec.CommandContext(ctx, "docker", "run", "-d",
+		"--name", containerName,
+		"--network", "forgecloud-net",
+		"--cpus", cpu,
+		"--memory", memory,
+		"-e", "WORKSPACE_ID="+id,
+		image, "sh", "-c", "apk add --no-cache bash && bash",
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return Workspace{}, err
+	}
+
+	containerID := strings.TrimSpace(string(out))
+
+	inspectCmd := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}", containerID)
+	ipOut, err := inspectCmd.CombinedOutput()
+	if err != nil {
+		return Workspace{}, err
+	}
+
+	ip := strings.TrimSpace(string(ipOut))
+
+	ws := Workspace{
+		ID:        id,
+		Container: containerName,
+		Image:     image,
+		CPU:       cpu,
+		Memory:    memory,
+		IP:        ip,
+		CreatedAt: time.Now(),
+	}
+
+	wsRegistry.Lock()
+	wsRegistry.items[id] = ws
+	wsRegistry.Unlock()
+
+	log.Printf("[workspace created] id=%s container=%s image=%s cpu=%s memory=%s ip=%s", id, containerName, image, cpu, memory, ip)
+
+	return ws, nil
+}
+
+func handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID     string `json:"id"`
+		Image  string `json:"image"`
+		CPU    string `json:"cpu"`
+		Memory string `json:"memory"`
+	}
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid payload", http.StatusBadRequest)
+		http.Error(w, "invalid payload", 400)
 		return
 	}
 
-	// Simulate workspace creation + container spawn delay
-	containerIP := "172.18.0." + time.Now().Format("150405")[4:] // mock deterministic IP-like value
+	rid := generateRequestID()
+	ctx := context.WithValue(r.Context(), reqIDKey, rid)
 
-	registry.Lock()
-	registry.workspaces[req.ID] = containerIP
-	registry.Unlock()
+	ctx2, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 
-	log.Printf("Workspace created: %s → %s (image=%s cpu=%s mem=%s)",
-		req.ID, containerIP, req.Image, req.CPULimit, req.Memory)
+	ws, err := CreateContainerWorkspace(ctx2, req.ID, req.Image, req.CPU, req.Memory)
+	if err != nil {
+		http.Error(w, "workspace spawn failed", 500)
+		return
+	}
 
-	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte("workspace registered"))
+	w.Header().Set("X-Request-Id", rid)
+	w.WriteHeader(201)
+	json.NewEncoder(w).Encode(ws)
 }
 
-// GET /workspace/{id}
-func getWorkspace(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Path[len("/workspace/"):]
-	registry.RLock()
-	ip, ok := registry.workspaces[id]
-	registry.RUnlock()
+func handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/workspace/")
+	wsRegistry.RLock()
+	ws, ok := wsRegistry.items[id]
+	wsRegistry.RUnlock()
 
 	if !ok {
-		http.Error(w, "workspace not found", http.StatusNotFound)
+		http.Error(w, "workspace not found", 404)
 		return
 	}
 
-	res, _ := json.Marshal(map[string]string{"id": id, "ip": ip})
-	w.WriteHeader(http.StatusOK)
-	w.Write(res)
+	json.NewEncoder(w).Encode(ws)
 }
 
-// GET /health
-func health(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(200)
-	w.Write([]byte("ok"))
-}
-
-// Main server bootstrap
 func main() {
-	port := ":4000"
 	mux := http.NewServeMux()
+	mux.HandleFunc("/workspace/create", handleCreateWorkspace)
+	mux.HandleFunc("/workspace/", handleGetWorkspace)
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 
-	mux.HandleFunc("/workspace/create", createWorkspace)
-	mux.HandleFunc("/workspace/", getWorkspace)
-	mux.HandleFunc("/health", health)
-	mux.HandleFunc("/healthz", health)
-
-	log.Println("Workspace Manager starting on", port)
+	srv := &http.Server{
+		Addr:         ":4000",
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
 
 	go func() {
-		if err := http.ListenAndServe(port, mux); err != nil {
-			log.Fatalf("workspace manager crashed: %v", err)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Workspace Manager crashed: %v", err)
 		}
 	}()
 
-	// Graceful shutdown
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 
-	log.Println("Workspace Manager shutting down...")
-	time.Sleep(1 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	srv.Shutdown(ctx)
 	log.Println("Workspace Manager stopped gracefully")
-
-	os.Exit(0)
 }
