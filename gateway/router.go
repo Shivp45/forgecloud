@@ -4,35 +4,72 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
+	"sync"
 )
+
+var serviceRegistry = struct {
+	sync.RWMutex
+	services map[string]string
+}{services: make(map[string]string)}
+
+func RegisterService(name, target string) {
+	serviceRegistry.Lock()
+	defer serviceRegistry.Unlock()
+	serviceRegistry.services[name] = target
+	log.Printf("Service registered: %s → %s", name, target)
+}
+
+func GetService(name string) (string, bool) {
+	serviceRegistry.RLock()
+	defer serviceRegistry.RUnlock()
+	target, exists := serviceRegistry.services[name]
+	return target, exists
+}
 
 func NewRouter() http.Handler {
 	mux := http.NewServeMux()
 
-	// Health check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(200)
 		w.Write([]byte("ok"))
 	})
 
-	// Main handler
+	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		target := r.URL.Query().Get("target")
+
+		if name == "" || target == "" {
+			http.Error(w, "missing name or target", 400)
+			return
+		}
+
+		RegisterService(name, target)
+		w.WriteHeader(201)
+		w.Write([]byte("registered"))
+	})
+
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := r.Host
 		subdomain := extractSubdomain(host)
 
-		log.Printf("req host=%s subdomain=%s path=%s", host, subdomain, r.URL.Path)
+		log.Printf("Incoming request host=%s subdomain=%s path=%s", host, subdomain, r.URL.Path)
 
 		if subdomain == "" {
-			http.Error(w, "unknown subdomain", http.StatusNotFound)
+			http.Error(w, "unknown subdomain", 404)
 			return
 		}
 
-		proxy := NewReverseProxy("http://backend:5678")
+		target, exists := GetService(subdomain)
+		if !exists {
+			http.Error(w, "service not available", 503)
+			return
+		}
+
+		proxy := NewReverseProxy(target)
 		proxy.ServeHTTP(w, r)
 	}))
 
-	return withRequestID(withTimeouts(mux))
+	return mux
 }
 
 func extractSubdomain(host string) string {
@@ -41,9 +78,4 @@ func extractSubdomain(host string) string {
 		return ""
 	}
 	return parts[0]
-}
-
-// Middleware: timeouts
-func withTimeouts(next http.Handler) http.Handler {
-	return http.TimeoutHandler(next, 30*time.Second, "request timed out")
 }
