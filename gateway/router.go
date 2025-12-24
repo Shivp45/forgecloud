@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 var serviceRegistry = struct {
@@ -34,39 +36,37 @@ func NewRouter() http.Handler {
 		w.Write([]byte("ok"))
 	})
 
-	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
-		name := r.URL.Query().Get("name")
-		target := r.URL.Query().Get("target")
-
-		if name == "" || target == "" {
-			http.Error(w, "missing name or target", 400)
-			return
-		}
-
-		RegisterService(name, target)
-		w.WriteHeader(201)
-		w.Write([]byte("registered"))
-	})
-
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rid := r.Context().Value(reqIDKey)
+		start := time.Now()
+
 		host := r.Host
-		subdomain := extractSubdomain(host)
+		sub := extractSubdomain(host)
 
-		log.Printf("Incoming request host=%s subdomain=%s path=%s", host, subdomain, r.URL.Path)
-
-		if subdomain == "" {
+		if sub == "" {
 			http.Error(w, "unknown subdomain", 404)
 			return
 		}
 
-		target, exists := GetService(subdomain)
-		if !exists {
-			http.Error(w, "service not available", 503)
+		target, ok := GetService(sub)
+		if !ok {
+			http.Error(w, "service not found", 503)
 			return
 		}
 
 		proxy := NewReverseProxy(target)
+		if proxy == nil {
+			http.Error(w, "bad upstream", 502)
+			return
+		}
+
 		proxy.ServeHTTP(w, r)
+
+		elapsed := time.Since(start)
+		log.Printf("request=%v workspace=%s upstream=%s duration=%v latency=%dms",
+			rid, sub, target, elapsed, elapsed.Milliseconds())
+
+		w.Header().Set("X-Latency-Ms", fmt.Sprint(elapsed.Milliseconds()))
 	}))
 
 	return mux
