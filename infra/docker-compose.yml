@@ -6,11 +6,23 @@ services:
   workspace-manager:
     build:
       context: ../workspace-manager
+    image: forgecloud/workspace-manager
     container_name: forgecloud-workspace-manager
     networks:
       - forgecloud-net
     ports:
       - "4000:4000"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: "1G"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
   dns-server:
     build:
       context: ../dns-server
@@ -30,7 +42,13 @@ services:
       - forgecloud-net
     ports:
       - "8080:8080"
-
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: "1G"
+          
   backend:
     image: hashicorp/http-echo
     container_name: forgecloud-backend

@@ -6,17 +6,17 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
+	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
-
 type ctxKey string
-
 const reqIDKey ctxKey = "rid"
 
 type Workspace struct {
@@ -34,8 +34,52 @@ var wsRegistry = struct {
 	items map[string]Workspace
 }{items: make(map[string]Workspace)}
 
-func generateRequestID() string {
-	return time.Now().Format("20060102T150405.000")
+var limiter = rate.NewLimiter(5, 10)
+
+func recoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("[panic recovered] %v", err)
+				http.Error(w, "internal server error", 500)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+func timeoutMiddleware(next http.Handler) http.Handler {
+	return http.TimeoutHandler(next, 15*time.Second, "request timeout")
+}
+
+func headerHardeningMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func rateLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			http.Error(w, "too many requests", 429)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func withRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rid := time.Now().Format("20060102T150405.000")
+		ctx := context.WithValue(r.Context(), reqIDKey, rid)
+		w.Header().Set("X-Request-Id", rid)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 func CreateContainerWorkspace(ctx context.Context, id, image, cpu, memory string) (Workspace, error) {
@@ -97,7 +141,7 @@ func handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rid := generateRequestID()
+	rid := time.Now().Format(time.RFC3339Nano)
 	ctx := context.WithValue(r.Context(), reqIDKey, rid)
 
 	ctx2, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -130,8 +174,8 @@ func handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/workspace/create", handleCreateWorkspace)
-	mux.HandleFunc("/workspace/", handleGetWorkspace)
+	mux.Handle("/workspace/create", withRequestID(rateLimitMiddleware(headerHardeningMiddleware(timeoutMiddleware(recoverMiddleware(http.HandlerFunc(handleCreateWorkspace))))))
+	mux.Handle("/workspace/", rateLimitMiddleware(headerHardeningMiddleware(timeoutMiddleware(recoverMiddleware(http.HandlerFunc(handleGetWorkspace)))))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 
 	srv := &http.Server{
@@ -148,7 +192,7 @@ func main() {
 	}()
 
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	<-stop
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
