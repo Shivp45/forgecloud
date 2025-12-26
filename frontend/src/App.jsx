@@ -4,6 +4,7 @@ import Editor from "./components/Editor";
 import TerminalPanel from "./components/Terminal";
 import CollabPanel from "./components/CollabPanel";
 import GoLiveModal from "./components/GoLiveModal";
+import GoLivePanel from "./components/GoLivePanel";
 import { connectCollab, sendCursor, sendCodeUpdate } from "./services/collabSocket";
 
 export default function App() {
@@ -18,37 +19,59 @@ export default function App() {
     return () => ws.close();
   }, []);
 
+  const handleCursorMove = (line, column) => {
+    if (socket) sendCursor(socket, "Shivraj", line, column);
+  };
+
+  const handleCodeChange = (newCode) => {
+    setCode(newCode);
+    if (socket) sendCodeUpdate(socket, "Shivraj", newCode);
+  };
+
   return (
-    <div className="bg-gradient-to-br from-[#0a0a14] to-[#1a1a2a] min-h-screen text-white flex">
+    <div className="bg-gradient-to-br from-[#0a0a14] to-[#1a1a2a] min-h-screen text-white">
 
-      {/* Sidebar Collaboration Panel */}
-      <div className="w-[22%] h-screen border-r border-white/10 bg-black/30">
-        <CollabPanel workspaceID={workspaceID} />
-      </div>
+      {/* Sidebar + Main IDE Layout */}
+      <div className="flex">
 
-      {/* Main IDE Area */}
-      <div className="w-[78%] flex flex-col">
-        <Toolbar workspaceID={workspaceID} />
-
-        {/* Code Editor */}
-        <div className="flex-grow p-3">
-          <Editor value={code} onChange={setCode} />
+        {/* Sidebar Collaboration Panel */}
+        <div className="w-[22%] h-screen border-r border-white/10 bg-black/30">
+          <CollabPanel workspaceID={workspaceID} />
         </div>
 
-        {/* Terminal */}
-        <TerminalPanel />
+        {/* Main IDE Area (scrollable content goes behind fixed navbar) */}
+        <div className="w-[78%] flex flex-col pt-[72px]">
 
-        {/* Go Live Button */}
-        <div className="p-3 flex gap-2">
-          <button
-            onClick={() => setShowLive(true)}
-            className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 transition text-sm"
-          >
-            Go Live
-          </button>
+          {/* Fixed Navbar */}
+          <Toolbar workspaceID={workspaceID} />
+
+          {/* Code Editor */}
+          <div className="flex-grow p-3">
+            <Editor value={code} onChange={handleCursorMove} onCursorChange={handleCursorMove} />
+          </div>
+
+          {/* Terminal */}
+          <TerminalPanel />
+
+          {/* YouTube Live Streaming Panel */}
+          <div className="p-3">
+            <GoLivePanel workspaceID={workspaceID} />
+          </div>
+
+          {/* Go Live Button */}
+          <div className="p-3 flex gap-2">
+            <button
+              onClick={() => setShowLive(true)}
+              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 transition text-sm"
+            >
+              Go Live
+            </button>
+          </div>
+
+          {/* Streaming Modal */}
+          {showLive && <GoLiveModal workspaceID={workspaceID} onClose={() => setShowLive(false)} />}
+
         </div>
-
-        {showLive && <GoLiveModal workspaceID={workspaceID} onClose={() => setShowLive(false)} />}
       </div>
 
     </div>

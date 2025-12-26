@@ -28,28 +28,34 @@
 
 
 import { useEffect, useRef } from "react";
+import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
-import { Terminal as XTerm } from "xterm";
 
 export default function TerminalPanel() {
-  const terminalRef = useRef(null);
+  const divRef = useRef(null);
 
   useEffect(() => {
-    const term = new XTerm({
-      rows: 12,
+    const term = new Terminal({
+      rows: 14,
       cursorBlink: true,
-      theme: {
-        background: "rgba(0,0,0,0.4)",
-        foreground: "#ffffff",
-      }
+      convertEol: true,
     });
 
-    term.open(terminalRef.current);
+    term.open(divRef.current);
     term.write("ForgeCloud Terminal Ready 🚀\r\n");
     term.write("~$ ");
+
+    term.onData((data) => {
+      term.write(data); // echo typed text
+    });
 
     return () => term.dispose();
   }, []);
 
-  return <div ref={terminalRef} className="w-full h-[30vh] rounded-2xl border border-white/10 shadow-lg" />;
+  return (
+    <div
+      ref={divRef}
+      className="w-full h-[32vh] bg-[#0f0f1a] rounded-b-2xl border-t border-white/10 shadow-inner p-2 overflow-hidden"
+    />
+  );
 }
