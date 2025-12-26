@@ -1,5 +1,16 @@
 {
+  "name": "collaboration-server",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
   "dependencies": {
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "express": "^4.18.2",
+    "winston": "^3.11.0",
+    "express-rate-limit": "^7.2.0"
   }
 }

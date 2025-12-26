@@ -1,21 +1,31 @@
 import { motion } from "framer-motion";
 
-export default function GoLiveModal({ workspaceID, onClose }) {
+export default function GoLiveModal({ onClose }) {
   return (
-    <div className="fixed inset-0 bg-black/60 flex justify-center items-center">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="fixed inset-0 bg-black/70 backdrop-blur-2xl flex justify-center items-center z-50"
+    >
       <motion.div
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        className="w-[400px] bg-white/10 backdrop-blur-xl border border-white/20 p-4 rounded-2xl shadow-xl"
+        initial={{ scale: 0.96, y: 8 }}
+        animate={{ scale: 1, y: 0 }}
+        className="w-[420px] bg-white/10 p-6 rounded-2xl shadow-2xl border border-white/20"
       >
-        <h2 className="text-xl mb-2">Go Live from IDE 🚀</h2>
-        <p className="text-sm opacity-80 mb-3">Workspace: {workspaceID}</p>
+        <h2 className="text-xl font-bold mb-3">You're going live! 🚀</h2>
+        <p className="text-sm text-white/70 mb-5">
+          This will stream your IDE workspace to YouTube in real time.
+        </p>
 
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-xl text-sm">Start Stream</button>
-          <button onClick={onClose} className="px-3 py-1 bg-red-500/20 hover:bg-red-500/40 rounded-xl text-sm">Cancel</button>
+        <div className="flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/40 transition text-sm"
+          >
+            Close
+          </button>
         </div>
       </motion.div>
-    </div>
+    </motion.div>
   );
 }

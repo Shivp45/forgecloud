@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Remove Vite default body centering that breaks IDE layout */
+
 body {
   margin: 0;
   display: block;

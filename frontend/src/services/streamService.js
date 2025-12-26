@@ -1,3 +1,4 @@
+// Core YouTube Live handlers (defined first)
 export async function triggerYouTubeLive(workspaceID, streamKey) {
   try {
     const controller = new AbortController();
@@ -11,9 +12,10 @@ export async function triggerYouTubeLive(workspaceID, streamKey) {
     });
 
     clearTimeout(timeout);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } catch (err) {
-    console.error("YouTube handshake failed:", err);
+    console.error("YouTube stream start failed:", err);
     return { status: "error", message: "stream handshake failed" };
   }
 }
@@ -25,9 +27,20 @@ export async function stopYouTubeLive(workspaceID) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspaceID }),
     });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } catch (err) {
-    console.error("Stop stream failed:", err);
+    console.error("YouTube stream stop failed:", err);
     return { status: "error", message: "stop handshake failed" };
   }
+}
+
+// Wrapper functions used by UI components
+export async function startYouTubeStream(workspaceID, streamKey) {
+  return triggerYouTubeLive(workspaceID, streamKey);
+}
+
+export async function stopYouTubeStream(workspaceID) {
+  return stopYouTubeLive(workspaceID);
 }
