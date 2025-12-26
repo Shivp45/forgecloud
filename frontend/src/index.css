@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Remove Vite default body centering that breaks IDE layout */
+body {
+  margin: 0;
+  display: block;
+  min-width: 320px;
+  min-height: 100vh;
+  background: transparent;
+}
+
+/* Preserve optional root font but avoid color overrides */
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
